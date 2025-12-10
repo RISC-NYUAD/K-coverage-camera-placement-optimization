@@ -77,7 +77,7 @@ function [best_layout, voxels, initial_layout,output] = optimizeCameraLayoutCube
     % --- PSO options ---
     options = optimoptions('particleswarm', ...
         'SwarmSize', SwarmSize, ...
-        'MaxIterations', 500000, ...
+        'MaxIterations', 1000, ...
         'Display', 'iter', ...
         'InitialSwarmMatrix', initSwarm);
 
@@ -89,8 +89,8 @@ function [best_layout, voxels, initial_layout,output] = optimizeCameraLayoutCube
     
     % --- reshape result: [num_cams x 5] [x y z yaw pitch] ---
     best_layout = reshape(z_opt, [5, num_cams])';
-end
 
+end
 function assertROIInsideWorkspace(workspace_bounds, roi_bounds)
 %ASSERTROIINSIDEWORKSPACE throws error if ROI is not fully inside workspace.
 
@@ -102,6 +102,58 @@ function assertROIInsideWorkspace(workspace_bounds, roi_bounds)
     end
 end
 
+% function x0 = initCamerasOnWorkspaceTop_lookBase(workspace_bounds, num_cams)
+%     % workspace_bounds: [3 x 2]
+%     %   [xWmin xWmax;
+%     %    yWmin yWmax;
+%     %    zWmin zWmax]
+%     %
+%     % Returns x0: 1 x (5*num_cams)  [x y z yaw pitch] per camera
+% 
+%     % Workspace center in XY
+%     cxW = mean(workspace_bounds(1,:));
+%     cyW = mean(workspace_bounds(2,:));
+% 
+%     % Base center (what we look at)
+%     base_center = [cxW, cyW, workspace_bounds(3,1)];  % zWmin
+% 
+%     % Top surface of workspace (where cameras sit)
+%     top_z = workspace_bounds(3,2);  % zWmax
+% 
+%     % Workspace XY size
+%     dxW = diff(workspace_bounds(1,:));
+%     dyW = diff(workspace_bounds(2,:));
+% 
+%     % Radius: stay inside workspace top surface
+%     max_radius = 0.45 * min(dxW, dyW);   % 45% of min side
+% 
+%     % Angular positions around the ring
+%     angles = linspace(0, 2*pi, num_cams+1);
+%     angles(end) = [];  % remove duplicate
+% 
+%     cam_params = zeros(num_cams, 5);
+% 
+%     for i = 1:num_cams
+%         th = angles(i);
+% 
+%         % Camera position on top surface of workspace
+%         x = cxW + max_radius * cos(th);
+%         y = cyW + max_radius * sin(th);
+%         z = top_z;
+% 
+%         % Direction vector towards center of workspace base
+%         v = base_center - [x, y, z];
+%         r_xy  = norm(v(1:2));
+%         yaw   = atan2(v(2), v(1));   % in XY plane
+%         pitch = atan2(v(3), r_xy);   % elevation
+% 
+%         cam_params(i,:) = [x, y, z, yaw, pitch];
+%     end
+% 
+%     % Flatten to decision vector [1 x (5*num_cams)]
+%     x0 = reshape(cam_params.', 1, []);
+% end
+
 function x0 = initCamerasOnWorkspaceTop_lookBase(workspace_bounds, num_cams)
     % workspace_bounds: [3 x 2]
     %   [xWmin xWmax;
@@ -109,42 +161,62 @@ function x0 = initCamerasOnWorkspaceTop_lookBase(workspace_bounds, num_cams)
     %    zWmin zWmax]
     %
     % Returns x0: 1 x (5*num_cams)  [x y z yaw pitch] per camera
+    %
+    % Cameras are placed on the top surface (z = zWmax),
+    % evenly spaced along the perimeter of the top rectangle,
+    % each one oriented toward the geometric center of the workspace.
 
-    % Workspace center in XY
-    cxW = mean(workspace_bounds(1,:));
-    cyW = mean(workspace_bounds(2,:));
+    xWmin = workspace_bounds(1,1);
+    xWmax = workspace_bounds(1,2);
+    yWmin = workspace_bounds(2,1);
+    yWmax = workspace_bounds(2,2);
+    zWmin = workspace_bounds(3,1);
+    zWmax = workspace_bounds(3,2);
 
-    % Base center (what we look at)
-    base_center = [cxW, cyW, workspace_bounds(3,1)];  % zWmin
+    % Geometric center of the full workspace (target point)
+    cxW = 0.5 * (xWmin + xWmax);
+    cyW = 0.5 * (yWmin + yWmax);
+    czW = 0.5 * (zWmin + zWmax);
+    workspace_center = [cxW, cyW, czW];
 
-    % Top surface of workspace (where cameras sit)
-    top_z = workspace_bounds(3,2);  % zWmax
+    % Top surface z coordinate
+    top_z = 0.9*zWmax;
 
-    % Workspace XY size
-    dxW = diff(workspace_bounds(1,:));
-    dyW = diff(workspace_bounds(2,:));
-
-    % Radius: stay inside workspace top surface
-    max_radius = 0.45 * min(dxW, dyW);   % 45% of min side
-
-    % Angular positions around the ring
-    angles = linspace(0, 2*pi, num_cams+1);
-    angles(end) = [];  % remove duplicate
+    % Perimeter lengths
+    dxW = xWmax - xWmin;
+    dyW = yWmax - yWmin;
+    perim = 2*(dxW + dyW);
 
     cam_params = zeros(num_cams, 5);
 
+    % Evenly spaced along perimeter [0, perim)
     for i = 1:num_cams
-        th = angles(i);
+        s = (i-1) / num_cams * perim;  % arc-length parameter
 
-        % Camera position on top surface of workspace
-        x = cxW + max_radius * cos(th);
-        y = cyW + max_radius * sin(th);
+        if s <= dxW
+            % bottom edge: (xWmin -> xWmax, y = yWmin)
+            x = xWmin + s;
+            y = yWmin;
+        elseif s <= dxW + dyW
+            % right edge: (x = xWmax, yWmin -> yWmax)
+            x = xWmax;
+            y = yWmin + (s - dxW);
+        elseif s <= 2*dxW + dyW
+            % top edge: (xWmax -> xWmin, y = yWmax)
+            x = xWmax - (s - (dxW + dyW));
+            y = yWmax;
+        else
+            % left edge: (x = xWmin, yWmax -> yWmin)
+            x = xWmin;
+            y = yWmax - (s - (2*dxW + dyW));
+        end
+
         z = top_z;
 
-        % Direction vector towards center of workspace base
-        v = base_center - [x, y, z];
-        r_xy  = norm(v(1:2));
-        yaw   = atan2(v(2), v(1));   % in XY plane
+        % Direction vector from camera to workspace center
+        v    = workspace_center - [x, y, z];
+        r_xy = norm(v(1:2));
+        yaw   = atan2(v(2), v(1));   % azimuth in XY plane
         pitch = atan2(v(3), r_xy);   % elevation
 
         cam_params(i,:) = [x, y, z, yaw, pitch];
@@ -153,4 +225,5 @@ function x0 = initCamerasOnWorkspaceTop_lookBase(workspace_bounds, num_cams)
     % Flatten to decision vector [1 x (5*num_cams)]
     x0 = reshape(cam_params.', 1, []);
 end
+
 
