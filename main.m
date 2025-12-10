@@ -17,9 +17,9 @@ roi3_bounds = [2.0 3.0;
 roi_bounds = [0.5 3.5;
                0.5 5.0;
                1.0 4.0];
-%roi_bounds_all = cat(3, roi1_bounds, roi2_bounds, roi3_bounds);
+roi_bounds_all = cat(3, roi1_bounds, roi2_bounds, roi3_bounds);
 %roi_bounds_all = workspace_bounds;
-roi_bounds_all = cat(3, roi_bounds);
+%roi_bounds_all = cat(3, roi_bounds);
 
 num_cams = 10;
 k_req    = 8;
@@ -108,3 +108,4 @@ xline(k_req, '--r', 'LineWidth', 1.4, ...
 
 legend({'Initial Layout', 'Optimized Layout'}, 'Location', 'northwest');
 set(gca, 'FontSize', 11);
+
